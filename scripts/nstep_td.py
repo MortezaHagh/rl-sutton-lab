@@ -288,3 +288,51 @@ class NstepTDTreeBackup(NstepTDOffPolicy):
                     break
                 t += 1
             self.n_steps_per_episode.append(t)
+
+
+class NstepTDQSigma(NstepTDOffPolicy):
+    def __init__(self, env: BaseEnv, hyperparameters: NstepTDHyperparameters):
+        super().__init__(env, hyperparameters)
+
+    def run(self):
+        p_sigma = 0.5  # probability of using expected update vs sample update
+
+        for episode in range(self.p.n_episodes):
+            state = self.env.start_state
+            action, p_b = self.behavior_policy(state)
+            states = [state]
+            actions = [action]
+            rewards = [0]  # reward for time step 0 is 0
+            rhos = [self.rho_action(state, action, p_b)]
+            p_bs = [p_b]  # policy probabilities for each action
+            T = float('inf')
+            t = 0
+            while True:
+                if t < T:
+                    next_state, reward, done = self.step(states[-1], actions[-1])
+                    states.append(next_state)
+                    rewards.append(reward)
+                    if done:
+                        T = t + 1
+                    else:
+                        action, p_b = self.behavior_policy(next_state)
+                        actions.append(action)
+                        rhos.append(self.rho_action(next_state, action, p_b))
+                        p_bs.append(p_b)
+                tau = t - self.p.n + 1
+                if tau >= 0:
+                    G = 0
+                    for k in range(min(t + 1, T), tau, -1):
+                        if k == T:
+                            G = rewards[T]
+                        else:
+                            sigma = np.random.rand() < p_sigma
+                            expected_q = self.get_expected_return(states, k)
+                            G = rewards[k] \
+                                + self.p.gamma * (sigma * rhos[k] + (1 - sigma) * p_bs[k]) * (G - self.Q[states[k]][actions[k]]) \
+                                + self.p.gamma * expected_q
+                    self.Q[states[tau]][actions[tau]] += self.p.alpha * (G - self.Q[states[tau]][actions[tau]])
+                if tau == T - 1:
+                    break
+                t += 1
+            self.n_steps_per_episode.append(t)
